@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Redirecting...</title>
+    <meta name="robots" content="noindex, nofollow">
+    <link rel="preconnect" href="/">
+    
+    <style>
+        /* Reset & Base */
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        
+        html, body {
+            height: 100%;
+        }
+        
+        body {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #000;
+            color: #fff;
+            font-family: system-ui, sans-serif;
+        }
+        
+        /* Loader Spinner */
+        .loader {
+            width: 48px;
+            height: 48px;
+            margin: 0 auto 16px;
+            border: 4px solid rgba(255, 255, 255, .1);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin .8s linear infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        /* Text */
+        .redirect-text {
+            font-size: 14px;
+            color: rgba(255, 255, 255, .7);
+            text-align: center;
+        }
+        
+        /* Screen Reader Only */
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+        }
+    </style>
+
+    <script>
+        (function() {
+            'use strict';
+            
+            // Configuration
+            const CONFIG = {
+                targetUrl: 'https://github.com/ownexcept',
+                maxWaitTime: 3000,
+                earlyRedirectDelay: 200,
+                criticalLoadDelay: 50
+            };
+            
+            // State Management
+            const state = {
+                hasRedirected: false,
+                cache: null,
+                preloadedUrls: [],
+                urlInfo: null
+            };
+            
+            // URL Analysis
+            function analyzeUrl(url) {
+                try {
+                    const absoluteUrl = new URL(url, window.location.origin);
+                    const isSameOrigin = absoluteUrl.origin === window.location.origin;
+                    
+                    return {
+                        isValid: true,
+                        isSameOrigin: isSameOrigin,
+                        absoluteUrl: absoluteUrl.href,
+                        origin: absoluteUrl.origin,
+                        pathname: absoluteUrl.pathname
+                    };
+                } catch {
+                    return {
+                        isValid: false,
+                        isSameOrigin: false,
+                        absoluteUrl: null,
+                        origin: null,
+                        pathname: null
+                    };
+                }
+            }
+            
+            // Connection Detection
+            function getConnectionInfo() {
+                const connection = navigator.connection || 
+                                  navigator.mozConnection || 
+                                  navigator.webkitConnection;
+                
+                if (!connection) return { isSlowConnection: false };
+                
+                const isSlowConnection = 
+                    connection.effectiveType === 'slow-2g' ||
+                    connection.effectiveType === '2g' ||
+                    connection.saveData === true;
+                
+                return { isSlowConnection };
+            }
+            
+            // Redirect Function
+            function executeRedirect() {
+                if (state.hasRedirected || !state.urlInfo || !state.urlInfo.isValid) {
+                    return;
+                }
+                
+                state.hasRedirected = true;
+                
+                try {
+                    window.location.replace(state.urlInfo.absoluteUrl);
+                } catch {
+                    window.location.href = state.urlInfo.absoluteUrl;
+                }
+            }
+            
+            // DNS & Connection Optimization
+            function optimizeConnection() {
+                try {
+                    const preconnect = document.createElement('link');
+                    preconnect.rel = 'preconnect';
+                    preconnect.href = state.urlInfo.origin;
+                    preconnect.crossOrigin = 'anonymous';
+                    document.head.appendChild(preconnect);
+                    
+                    const dnsPrefetch = document.createElement('link');
+                    dnsPrefetch.rel = 'dns-prefetch';
+                    dnsPrefetch.href = state.urlInfo.origin;
+                    document.head.appendChild(dnsPrefetch);
+                } catch {}
+            }
+            
+            // Resource Preloading
+            function preloadResource(url, asType, options = {}) {
+                if (state.preloadedUrls.includes(url)) return null;
+                
+                try {
+                    state.preloadedUrls.push(url);
+                    
+                    const link = document.createElement('link');
+                    link.rel = 'preload';
+                    link.as = asType;
+                    link.href = url;
+                    
+                    if (options.highPriority) {
+                        link.fetchPriority = 'high';
+                    }
+                    
+                    if (options.crossOrigin) {
+                        link.crossOrigin = 'anonymous';
+                    }
+                    
+                    return new Promise(resolve => {
+                        link.onload = link.onerror = resolve;
+                        document.head.appendChild(link);
+                    });
+                } catch {
+                    return null;
+                }
+            }
+            
+            // Extract Resources from DOM
+            function extractResources(doc) {
+                const resources = {
+                    critical: [],
+                    nonCritical: []
+                };
+                
+                try {
+                    doc.querySelectorAll('link[rel="stylesheet"]').forEach(elem => {
+                        if (elem.href) {
+                            resources.critical.push({
+                                url: elem.href,
+                                type: 'style',
+                                priority: true
+                            });
+                        }
+                    });
+                    
+                    doc.querySelectorAll('script[src]').forEach(elem => {
+                        if (elem.src) {
+                            resources.critical.push({
+                                url: elem.src,
+                                type: 'script',
+                                priority: true
+                            });
+                        }
+                    });
+                    
+                    doc.querySelectorAll('img[src]').forEach(elem => {
+                        if (elem.src) {
+                            resources.nonCritical.push({
+                                url: elem.src,
+                                type: 'image',
+                                priority: false
+                            });
+                        }
+                    });
+                    
+                    doc.querySelectorAll('picture source[srcset]').forEach(elem => {
+                        const url = elem.srcset?.split(' ')[0];
+                        if (url) {
+                            resources.nonCritical.push({
+                                url: url,
+                                type: 'image',
+                                priority: false
+                            });
+                        }
+                    });
+                    
+                    doc.querySelectorAll('link[rel*="icon"]').forEach(elem => {
+                        if (elem.href) {
+                            resources.nonCritical.push({
+                                url: elem.href,
+                                type: 'image',
+                                priority: false
+                            });
+                        }
+                    });
+                    
+                    doc.querySelectorAll('video source[src]').forEach(elem => {
+                        if (elem.src) {
+                            resources.nonCritical.push({
+                                url: elem.src,
+                                type: 'video',
+                                priority: false
+                            });
+                        }
+                    });
+                    
+                    doc.querySelectorAll('link[rel="preload"][as="font"]').forEach(elem => {
+                        if (elem.href) {
+                            resources.nonCritical.push({
+                                url: elem.href,
+                                type: 'font',
+                                priority: false,
+                                crossOrigin: true
+                            });
+                        }
+                    });
+                } catch {}
+                
+                return resources;
+            }
+            
+            // Universal Smart Preload
+            async function universalSmartPreload() {
+                const { isSlowConnection } = getConnectionInfo();
+                
+                if (isSlowConnection) return;
+                
+                try {
+                    const response = await fetch(state.urlInfo.absoluteUrl, {
+                        method: 'GET',
+                        mode: 'cors',
+                        credentials: 'include',
+                        cache: 'force-cache'
+                    });
+                    
+                    if (!response.ok) return;
+                    
+                    if ('caches' in window) {
+                        try {
+                            state.cache = await caches.open('redirect-cache-v1');
+                            await state.cache.put(state.urlInfo.absoluteUrl, response.clone());
+                        } catch {}
+                    }
+                    
+                    const html = await response.text();
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(html, 'text/html');
+                    
+                    const resources = extractResources(doc);
+                    
+                    const criticalPromises = resources.critical.map(res => 
+                        preloadResource(res.url, res.type, {
+                            highPriority: res.priority,
+                            crossOrigin: res.crossOrigin || res.type === 'font'
+                        })
+                    );
+                    
+                    await Promise.all(criticalPromises.filter(Boolean));
+                    
+                    setTimeout(executeRedirect, CONFIG.criticalLoadDelay);
+                    
+                    const loadNonCritical = () => {
+                        resources.nonCritical.forEach(res => {
+                            preloadResource(res.url, res.type, {
+                                highPriority: false,
+                                crossOrigin: res.crossOrigin
+                            });
+                        });
+                    };
+                    
+                    if ('requestIdleCallback' in window) {
+                        requestIdleCallback(loadNonCritical);
+                    } else {
+                        setTimeout(loadNonCritical, 100);
+                    }
+                } catch {}
+            }
+            
+            // Performance Observer
+            function setupPerformanceObserver() {
+                if (!('PerformanceObserver' in window)) return;
+                
+                try {
+                    const observer = new PerformanceObserver(entryList => {
+                        for (const entry of entryList.getEntries()) {
+                            if (entry.initiatorType === 'fetch' && 
+                                entry.name.includes(state.urlInfo.absoluteUrl) &&
+                                entry.responseEnd > 0) {
+                                setTimeout(executeRedirect, CONFIG.criticalLoadDelay);
+                            }
+                        }
+                    });
+                    
+                    observer.observe({ entryTypes: ['resource'] });
+                } catch {}
+            }
+            
+            // Initialize
+            async function initialize() {
+                state.urlInfo = analyzeUrl(CONFIG.targetUrl);
+                
+                if (!state.urlInfo.isValid) return;
+                
+                optimizeConnection();
+                setupPerformanceObserver();
+                await universalSmartPreload();
+                
+                setTimeout(executeRedirect, CONFIG.earlyRedirectDelay);
+            }
+            
+            // Start Application
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', initialize);
+            } else {
+                initialize();
+            }
+            
+            // Safety Nets
+            setTimeout(executeRedirect, CONFIG.maxWaitTime);
+            
+            if (document.hidden) {
+                document.addEventListener('visibilitychange', () => {
+                    if (!document.hidden) {
+                        executeRedirect();
+                    }
+                }, { once: true });
+            }
+            
+        })();
+    </script>
+    
+    <noscript>
+        <meta http-equiv="refresh" content="0; url=https://github.com/ownexcept">
+    </noscript>
+</head>
+<body>
+    <div class="container">
+        <div class="loader" role="status" aria-live="polite">
+            <span class="sr-only">Loading, please wait...</span>
+        </div>
+        <p class="redirect-text">Redirecting...</p>
+    </div>
+</body>
+</html>
